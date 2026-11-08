@@ -232,3 +232,59 @@ def test_connection_accepts_sdk_success_without_return_value(monkeypatch):
     with manager.connection(profile()) as connected:
         assert connected is fake
     assert calls == ["connect", "ready", "close"]
+
+
+def test_missing_writes_are_retried_and_verified(tmp_path, monkeypatch):
+    iface = radio()
+    writes = []
+
+    @contextmanager
+    def connect(_):
+        yield iface
+
+    def write(device, operations):
+        writes.append(operations)
+        if len(writes) == 2:
+            device.localNode.localConfig.device.CopyFrom(operations[0][2])
+
+    monkeypatch.setattr(manager, "apply_operations", write)
+    assert (
+        manager.reconcile(
+            profile(), "apply", tmp_path / "state", connect, sleep=lambda _: None
+        )
+        == 0
+    )
+    assert len(writes) == 2
+    assert len(list((tmp_path / "state").glob("before-*.json"))) == 2
+
+
+def test_permanent_drift_fails_after_three_passes(tmp_path, monkeypatch):
+    iface = radio()
+    writes = []
+
+    @contextmanager
+    def connect(_):
+        yield iface
+
+    monkeypatch.setattr(manager, "apply_operations", lambda *args: writes.append(args))
+    with pytest.raises(manager.ProfileError, match="three passes: config.device.role"):
+        manager.reconcile(
+            profile(), "apply", tmp_path / "state", connect, sleep=lambda _: None
+        )
+    assert len(writes) == 3
+
+
+def test_role_is_written_first_and_owner_last():
+    iface = radio()
+    wanted = profile(
+        {
+            "owner": {"is_unmessagable": False, "short_name": "OFF"},
+            "config": {"bluetooth": {"enabled": True}, "device": {"role": "CLIENT"}},
+            "moduleConfig": {"telemetry": {"device_update_interval": 3600}},
+        }
+    )
+    manager.validate_settings(wanted["settings"])
+    operations, _ = manager.plan(iface, wanted)
+    assert operations[0][:2] == ("config", "device")
+    assert operations[-1][0] == "owner"
+    assert operations[-1][2]["is_unmessagable"] is False

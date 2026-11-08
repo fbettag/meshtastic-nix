@@ -85,8 +85,14 @@ def validate_settings(settings, public=False):
             "The pinned Python API cannot write the statusmessage or tak module"
         )
     owner = settings.get("owner", {})
-    if not isinstance(owner, dict) or set(owner) - {"long_name", "short_name"}:
-        raise ProfileError("Only owner.long_name and owner.short_name can be managed")
+    if not isinstance(owner, dict) or set(owner) - {
+        "long_name",
+        "short_name",
+        "is_unmessagable",
+    }:
+        raise ProfileError("Only owner names and is_unmessagable can be managed")
+    if "is_unmessagable" in owner and type(owner["is_unmessagable"]) is not bool:
+        raise ProfileError("owner.is_unmessagable must be boolean")
     for key, limit in (("long_name", 39), ("short_name", 4)):
         if key in owner and (
             not isinstance(owner[key], str)
@@ -182,7 +188,15 @@ def plan(iface, profile):
     owner_paths = [
         f"owner.{k}"
         for k, v in owner.items()
-        if user.get({"long_name": "longName", "short_name": "shortName"}[k]) != v
+        if user.get(
+            {
+                "long_name": "longName",
+                "short_name": "shortName",
+                "is_unmessagable": "isUnmessagable",
+            }[k],
+            False if k == "is_unmessagable" else None,
+        )
+        != v
     ]
     if owner_paths:
         operations.append(("owner", None, owner))
@@ -208,6 +222,13 @@ def plan(iface, profile):
         if changes:
             operations.append(("channels", index, target))
             paths.extend(changes)
+    # Changing role installs firmware defaults. Apply it before explicit fields,
+    # and owner fields last because role defaults can change owner flags too.
+    operations.sort(
+        key=lambda op: (
+            0 if op[:2] == ("config", "device") else 2 if op[0] == "owner" else 1
+        )
+    )
     return operations, paths
 
 
@@ -346,18 +367,40 @@ def reconcile(profile, command, state_dir, connect=connection, sleep=time.sleep)
             apply_operations(iface, operations)
         # Commit may reboot the radio. Always verify through a fresh connection.
         deadline = time.monotonic() + 120
+        passes, writes = 1, len(operations)
         while time.monotonic() < deadline:
             sleep(5)
             try:
                 with connect(profile) as iface:
-                    _, remaining = plan(iface, profile)
+                    retry_operations, remaining = plan(iface, profile)
+                    if remaining:
+                        if passes >= 3:
+                            raise ProfileError(
+                                "Configuration did not converge after three passes: "
+                                + ", ".join(remaining)
+                            )
+                        print(
+                            json.dumps(
+                                {
+                                    "node": profile["expectedNodeId"],
+                                    "status": "retry",
+                                    "fields": remaining,
+                                }
+                            ),
+                            flush=True,
+                        )
+                        saved = backup(iface, directory)
+                        print(f"Backup: {saved}", flush=True)
+                        apply_operations(iface, retry_operations)
+                        writes += len(retry_operations)
+                        passes += 1
                 if not remaining:
                     print(
                         json.dumps(
                             {
                                 "node": profile["expectedNodeId"],
                                 "status": "verified",
-                                "writes": len(operations),
+                                "writes": writes,
                             }
                         ),
                         flush=True,

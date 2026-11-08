@@ -14,7 +14,7 @@ firmware flashing or a complete factory image.
 
 ```nix
 {
-  inputs.meshtastic-nix.url = "git+ssh://git@github.com/fbettag/meshtastic-nix.git?ref=main";
+  inputs.meshtastic-nix.url = "github:fbettag/meshtastic-nix";
   inputs.meshtastic-nix.inputs.nixpkgs.follows = "nixpkgs";
   # In the host's module list:
   # inputs.meshtastic-nix.nixosModules.default
@@ -98,7 +98,8 @@ Operational errors exit 1. Unknown fields and invalid enum values fail before
 connecting. Fields use protobuf `snake_case`; channels are keyed by indices
 `"0"` through `"7"`. Null values are rejected. Repeated fields, when declared,
 are replaced; omitted fields and channels remain unchanged. Identity keys
-cannot be managed. Owner management is limited to long and short names.
+cannot be managed. Owner management supports long and short names and the
+boolean `is_unmessagable` flag (the spelling follows the protocol).
 The pinned SDK cannot write the `statusmessage` and `tak` modules; these are
 rejected before connecting.
 
@@ -106,6 +107,9 @@ Use one controller per device. A local advisory lock prevents concurrent runs
 using the same state directory, including read-only comparisons. The API has
 no distributed lock and the SDK's local transaction writes do not provide
 per-field acknowledgments. The fresh read-back is therefore the success check.
+Role changes are applied before other fields because firmware installs role
+defaults. If read-back still shows drift, only the remaining differences are
+applied again, with a maximum of three passes and a backup before each pass.
 Partial failures can leave settings changed; inspect the backup and reconcile
 again. A NixOS rollback changes the declared profile and can reapply it, but
 does not undo radio writes atomically or restore firmware. No automatic firmware
