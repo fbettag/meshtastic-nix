@@ -2,6 +2,7 @@
 
 Declarative Meshtastic configuration over the local TCP API, packaged as a Nix
 flake with NixOS and nix-darwin modules. A phone is not required.
+The pinned nixpkgs supports Apple Silicon macOS and aarch64/x86_64 Linux.
 
 The reconciler manages **only the fields you declare**. It preserves omitted
 fields, other channels, device identity keys and the node database. Every write
