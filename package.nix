@@ -10,7 +10,7 @@ let
 in
 python3Packages.buildPythonApplication {
   pname = "meshtastic-nix";
-  version = "0.1.0";
+  version = "0.1.1";
   pyproject = true;
   src = lib.cleanSource ./.;
   build-system = [ python3Packages.setuptools ];

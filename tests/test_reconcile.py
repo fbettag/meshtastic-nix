@@ -32,7 +32,7 @@ def radio():
     }
     return SimpleNamespace(
         localNode=node,
-        myInfo=mesh_pb2.MyNodeInfo(my_node_num=0x12345678),
+        myInfo=mesh_pb2.MyNodeInfo(my_node_num=0x12345678, reboot_count=1),
         metadata=mesh_pb2.DeviceMetadata(firmware_version="2.7.test"),
         getMyNodeInfo=lambda: {"user": user},
         nodesByNum={},
@@ -157,6 +157,7 @@ def test_readback_and_second_apply_does_not_write(tmp_path, monkeypatch, capsys)
         writes.extend(operations)
         for _, group, target in operations:
             getattr(device.localNode.localConfig, group).CopyFrom(target)
+        device.myInfo.reboot_count += 1
 
     monkeypatch.setattr(manager, "apply_operations", write)
     state = tmp_path / "state"
@@ -244,6 +245,7 @@ def test_missing_writes_are_retried_and_verified(tmp_path, monkeypatch):
 
     def write(device, operations):
         writes.append(operations)
+        device.myInfo.reboot_count += 1
         if len(writes) == 2:
             device.localNode.localConfig.device.CopyFrom(operations[0][2])
 
@@ -266,7 +268,11 @@ def test_permanent_drift_fails_after_three_passes(tmp_path, monkeypatch):
     def connect(_):
         yield iface
 
-    monkeypatch.setattr(manager, "apply_operations", lambda *args: writes.append(args))
+    def write(device, operations):
+        writes.append(operations)
+        device.myInfo.reboot_count += 1
+
+    monkeypatch.setattr(manager, "apply_operations", write)
     with pytest.raises(manager.ProfileError, match="three passes: config.device.role"):
         manager.reconcile(
             profile(), "apply", tmp_path / "state", connect, sleep=lambda _: None
@@ -288,3 +294,63 @@ def test_role_is_written_first_and_owner_last():
     assert operations[0][:2] == ("config", "device")
     assert operations[-1][0] == "owner"
     assert operations[-1][2]["is_unmessagable"] is False
+
+
+def test_matching_ram_before_reboot_is_not_success(tmp_path, monkeypatch):
+    iface = radio()
+    connects, writes = [], []
+
+    @contextmanager
+    def connect(_):
+        connects.append(1)
+        if len(connects) == 3:
+            # The first reboot lost the RAM-only change.
+            iface.myInfo.reboot_count = 2
+            iface.localNode.localConfig.device.role = 2  # ROUTER
+        elif len(connects) == 4:
+            iface.myInfo.reboot_count = 3
+        yield iface
+
+    def write(device, operations):
+        writes.append(operations)
+        device.localNode.localConfig.device.CopyFrom(operations[0][2])
+
+    monkeypatch.setattr(manager, "apply_operations", write)
+    assert (
+        manager.reconcile(
+            profile(), "apply", tmp_path / "state", connect, sleep=lambda _: None
+        )
+        == 0
+    )
+    assert len(connects) == 4
+    assert len(writes) == 2
+    assert iface.myInfo.reboot_count == 3
+
+
+def test_missing_reboot_counter_refuses_writes(tmp_path, monkeypatch):
+    iface = radio()
+    iface.myInfo.reboot_count = 0
+
+    @contextmanager
+    def connect(_):
+        yield iface
+
+    monkeypatch.setattr(
+        manager, "apply_operations", lambda *_: pytest.fail("Unexpected write")
+    )
+    with pytest.raises(manager.ProfileError, match="reboot counter"):
+        manager.reconcile(profile(), "apply", tmp_path / "state", connect)
+    assert not list((tmp_path / "state").glob("before-*.json"))
+
+
+def test_explicit_reboot_follows_commit(monkeypatch):
+    iface = radio()
+    events = []
+    node = iface.localNode
+    node.beginSettingsTransaction = lambda: events.append("begin")
+    node.writeConfig = lambda _: events.append("write")
+    node.commitSettingsTransaction = lambda: events.append("commit")
+    node.reboot = lambda seconds: events.append(("reboot", seconds))
+    monkeypatch.setattr(manager.time, "sleep", lambda _: None)
+    manager.apply_operations(iface, manager.plan(iface, profile())[0])
+    assert events == ["begin", "write", "commit", ("reboot", 2)]

@@ -8,7 +8,8 @@ The reconciler manages **only the fields you declare**. It preserves omitted
 fields, other channels and device identity keys. It never issues a node-database
 reset; firmware may prune node entries during a reboot. Every write
 requires the expected node ID, creates a private local backup, applies a settings
-transaction, and checks the result through a fresh connection. Reapplying a
+transaction, explicitly reboots, and checks the result through a fresh connection
+after the device's reboot counter changes. Reapplying a
 matching profile performs no writes. This is configuration management, not
 firmware flashing or a complete factory image.
 
@@ -112,6 +113,10 @@ per-field acknowledgments. The fresh read-back is therefore the success check.
 Role changes are applied before other fields because firmware installs role
 defaults. If read-back still shows drift, only the remaining differences are
 applied again, with a maximum of three passes and a backup before each pass.
+Matching values in RAM before a pending reboot do not count as success. Firmware
+must report a nonzero reboot counter; otherwise writes are refused because
+persistence cannot be verified. This has been tested on ESP32-based Heltec V3
+devices. Read-only `diff` and `check` do not require a reboot counter.
 Partial failures can leave settings changed; inspect the backup and reconcile
 again. A NixOS rollback changes the declared profile and can reapply it, but
 does not undo radio writes atomically or restore firmware. No automatic firmware

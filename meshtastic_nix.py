@@ -300,7 +300,7 @@ def backup(iface, directory):
 def apply_operations(iface, operations):
     node = iface.localNode
     node.beginSettingsTransaction()
-    time.sleep(0.3)
+    time.sleep(1)
     for section, name, target in operations:
         if section == "owner":
             user = iface.getMyNodeInfo()["user"]
@@ -312,10 +312,12 @@ def apply_operations(iface, operations):
             config = node.localConfig if section == "config" else node.moduleConfig
             getattr(config, name).CopyFrom(target)
             node.writeConfig(name)
-        time.sleep(0.3)
+        time.sleep(1)
     node.commitSettingsTransaction()
     # Let the firmware consume the commit before closing the TCP stream.
-    time.sleep(2)
+    time.sleep(3)
+    node.reboot(2)
+    time.sleep(1)
 
 
 class BoundedTCPInterface(TCPInterface):
@@ -362,16 +364,25 @@ def reconcile(profile, command, state_dir, connect=connection, sleep=time.sleep)
             )
             if command != "apply" or not paths:
                 return 2 if command == "check" and paths else 0
+            previous_boot = iface.myInfo.reboot_count
+            if previous_boot == 0:
+                raise ProfileError(
+                    "Firmware does not report a reboot counter; persistence cannot be verified"
+                )
             saved = backup(iface, directory)
             print(f"Backup: {saved}", flush=True)
             apply_operations(iface, operations)
-        # Commit may reboot the radio. Always verify through a fresh connection.
+        # A fresh connection can still see matching RAM before a delayed reboot.
+        # Require a changed boot counter before checking persisted settings.
         deadline = time.monotonic() + 120
         passes, writes = 1, len(operations)
         while time.monotonic() < deadline:
             sleep(5)
             try:
                 with connect(profile) as iface:
+                    identify(iface, profile)
+                    if iface.myInfo.reboot_count == previous_boot:
+                        continue
                     retry_operations, remaining = plan(iface, profile)
                     if remaining:
                         if passes >= 3:
@@ -391,6 +402,7 @@ def reconcile(profile, command, state_dir, connect=connection, sleep=time.sleep)
                         )
                         saved = backup(iface, directory)
                         print(f"Backup: {saved}", flush=True)
+                        previous_boot = iface.myInfo.reboot_count
                         apply_operations(iface, retry_operations)
                         writes += len(retry_operations)
                         passes += 1
@@ -401,6 +413,7 @@ def reconcile(profile, command, state_dir, connect=connection, sleep=time.sleep)
                                 "node": profile["expectedNodeId"],
                                 "status": "verified",
                                 "writes": writes,
+                                "rebootCount": iface.myInfo.reboot_count,
                             }
                         ),
                         flush=True,
