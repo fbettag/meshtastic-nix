@@ -5,7 +5,8 @@ flake with NixOS and nix-darwin modules. A phone is not required.
 The pinned nixpkgs supports Apple Silicon macOS and aarch64/x86_64 Linux.
 
 The reconciler manages **only the fields you declare**. It preserves omitted
-fields, other channels, device identity keys and the node database. Every write
+fields, other channels and device identity keys. It never issues a node-database
+reset; firmware may prune node entries during a reboot. Every write
 requires the expected node ID, creates a private local backup, applies a settings
 transaction, and checks the result through a fresh connection. Reapplying a
 matching profile performs no writes. This is configuration management, not
