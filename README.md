@@ -123,6 +123,10 @@ other clients writing concurrently. API behavior is based on the official
 
 ## Development
 
+Validated on a Heltec V3 running firmware `2.6.11.60ec05e` over WLAN, including
+configuration changes, fresh read-back and a second service run with no further
+writes. The Nix-built tests pass on Apple Silicon macOS and x86_64 Linux.
+
 `nix fmt` formats Nix files. `nix flake check` builds the package, runs the Python
 tests and evaluates the NixOS and Darwin service definitions. The package uses
 the Meshtastic library pinned through nixpkgs and requires a compatible 2.7.x
