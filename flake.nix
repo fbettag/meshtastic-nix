@@ -21,7 +21,7 @@
           program = "${self.packages.${system}.default}/bin/meshtastic-nix";
         };
       });
-      formatter = forSystems (system: nixpkgs.legacyPackages.${system}.nixfmt);
+      formatter = forSystems (system: nixpkgs.legacyPackages.${system}.nixfmt-tree);
       checks = forSystems (system: {
         package = self.packages.${system}.default;
         modules =
